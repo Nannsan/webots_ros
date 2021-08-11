@@ -1,0 +1,62 @@
+#VRML_SIM V8.2.1 utf8
+WorldInfo {
+  info [
+    "Copyright (C) 2006 Laboratory of Intelligent Systems (LIS), EPFL"
+    "Author: jean-christophe.zufferey@epfl.ch"
+    "Date: 05 APR 2006"
+  ]
+  title "e-puck_line"
+}
+Viewpoint {
+  orientation 0.999999 0.000923232 0.000745936 4.91603
+  position 0.0385503 0.782563 0.163448
+}
+Background {
+  skyColor [
+    1 1 1
+  ]
+}
+PointLight {
+  intensity 0.5
+  location 0.8 1 0.8
+  castShadows TRUE
+}
+PointLight {
+  location -1.1 1.2 1.3
+}
+RectangleArena {
+  floorSize 0.4 0.4
+  floorTextureUrl [
+    ""
+  ]
+  floorTileSize 0.4 0.4
+  wallThickness 0.03
+  wallHeight 0.05
+}
+DEF OBSTACLE2 Solid {
+  translation 0 0.025 0
+  children [
+    Shape {
+      appearance Appearance {
+        material Material {
+          diffuseColor 1 0.501961 1
+        }
+      }
+      geometry DEF BOX2 Box {
+        size 0.2 0.05 0.2
+      }
+    }
+  ]
+  name "red box"
+  boundingObject USE BOX2
+}
+DEF EPUCK E-puck {
+  translation 0.15 0 0.15
+  rotation 0 1 0 1.57
+  controller "ros"
+  camera_pixelSize 0
+  groundSensorsSlot [
+    E-puckGroundSensors {
+    }
+  ]
+}
