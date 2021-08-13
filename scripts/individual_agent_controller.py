@@ -1,8 +1,9 @@
 #!/usr/bin/env python2
 
+from numpy import ma
 import rospy
 from sensor_msgs.msg import Range
-from std_msgs.msg import Int8MultiArray
+from std_msgs.msg import Int8MultiArray , MultiArrayDimension
 from webots_ros.srv import set_float , set_int
 from webots_ros.msg import Float64Stamped
 from geometry_msgs.msg import Twist , Point , Quaternion
@@ -27,8 +28,10 @@ WHEEL_CIRCUMFERENCE = ((WHEEL_DIAMETER*math.pi)/100.0)
 MOT_STEP_DIST = (WHEEL_CIRCUMFERENCE/1000.0)    # 0.000125 meters per step (m/steps)
 # Chess Board Size(m)
 BOARD_SIZE = 0.01
+#Option on Debug Output
+DEBUG_FLAG = True
 
-class E_puck_Test():
+class E_puck_Test(object):
     def __init__(self,robot_name,init_x,init_y,init_theta):
         self.robot_name = robot_name
         rospy.init_node(robot_name + '_Core_Node',anonymous=False)
@@ -60,16 +63,25 @@ class E_puck_Test():
         self.Proximity_Init()
 
         #Init Map
-        self.map_msg = Int8MultiArray(layout = Point())
-        self.map_msg.layout.x  , self.map_msg.layout.y = init_x , init_y
+        position_dimension , self.Map_dimension = MultiArrayDimension() ,MultiArrayDimension()
+        self.map_msg = Int8MultiArray()
+        
+        position_dimension.label , position_dimension.size , position_dimension.stride = 'Init_pos' , init_x , init_y
+        self.map_msg.layout.dim.append(position_dimension)
         self.last_position = Point(init_x , init_y , init_theta)
-        # print(np.ones((3,3),dtype=int))
-        self.map_msg.data = -1 * np.mat((np.ones((3,3),dtype=int)))
-        self.map_msg.data[1,1] = 2
-        print(self.map_msg.data)
-        self.mapPublisher = rospy.Publisher(self.robot_name + '/map' , Int8MultiArray , queue_size = 1)
+        self.height , self.width = 3 , 3
+        map_matrix = -1 * np.mat((np.ones((self.height,self.width),dtype=int)))
+        self.current_position = (1,1)
+        map_matrix[self.current_position[0],self.current_position[1]] = 2
+        self.Map_dimension.label , self.Map_dimension.size , self.Map_dimension.stride = 'Map' , self.height , self.width
+        
+        self.map_msg.layout.dim.append(self.Map_dimension)
+        self.map_msg.data = self.Convert_MapData(map_matrix)
+        self.mapPublisher = rospy.Publisher('/map' , Int8MultiArray , queue_size = 1)
         while not rospy.is_shutdown():
             self.get_Odometry()
+            self.mapPublisher.publish(self.map_msg)
+            self.rate.sleep()
 
         rospy.loginfo('---Start ' + self.robot_name + '_ROS_Node Susseccfully')
 
@@ -106,7 +118,7 @@ class E_puck_Test():
         self.startTime = self.endTime
 
         self.odom_publisher.publish(odom_msg)
-        self.rate.sleep()
+        
         pos = (odom_msg.pose.pose.position.x, odom_msg.pose.pose.position.y, odom_msg.pose.pose.position.z)
         ori = (odom_msg.pose.pose.orientation.x, odom_msg.pose.pose.orientation.y, odom_msg.pose.pose.orientation.z, odom_msg.pose.pose.orientation.w)
         self.br.sendTransform(pos, ori, odom_msg.header.stamp, odom_msg.child_frame_id, odom_msg.header.frame_id)
@@ -165,6 +177,7 @@ class E_puck_Test():
         rospy.loginfo('---Init Proximity Successful---')
 
     def Generate_Map(self , *map_Data):
+        map_matrix = np.reshape(np.mat(self.map_msg.data) , (self.height , self.width))
         #---Definition of map---#
         # -1    ---     not detection yet       # 
         # 0     ---     no bondary              #        
@@ -172,35 +185,66 @@ class E_puck_Test():
         # 2     ---     e-puck current position #
 
         #---Position Update---#
-        height , width = np.shape(self.map_msg.data)
-        current_position = np.where(self.map_msg.data == 2)
-        delta_move_x , delta_move_y = (self.x_pos - self.last_position.x)/BOARD_SIZE , (self.y_pos - self.last_position.y)/BOARD_SIZE
+        current_position = self.current_position
+        delta_move_x , delta_move_y = -(self.x_pos - self.last_position.x)/BOARD_SIZE , -(self.y_pos - self.last_position.y)/BOARD_SIZE
         next_position = [int(current_position[0] + int(delta_move_x)) , int(current_position[1] + int(delta_move_y))]
         
-        next_position[0] , next_position[1] = np.clip(next_position[0] , 0 , height) , np.clip(next_position[1], 0 ,width)
-        print(next_position)
+        # next_position[0] , next_position[1] = np.clip(next_position[0] , 0 , height) , np.clip(next_position[1], 0 ,width)
+
         #Updata new position
         if next_position[0] != current_position[0] or next_position[1] != current_position[1]:
-            self.map_msg.data[next_position[0] , next_position[1]] = 2
-            self.map_msg.data[current_position[0] , current_position[1]] = 0
+            map_matrix[next_position[0] , next_position[1]] = 2
+            map_matrix[current_position[0] , current_position[1]] = 0
             self.last_position.x , self.last_position.y = self.x_pos , self.y_pos
             #Enlarge map
             if next_position[0] == 0:
-                self.map_msg.data = np.r_[np.mat(-1 * np.ones((1,width) , dtype = int)) , self.map_msg.data]
-            if next_position[0] == height - 1:
-                self.map_msg.data = np.r_[self.map_msg.data , np.mat(-1 * np.ones((1 , width) , dtype = int))]
+                map_matrix = np.r_[np.mat(-1 * np.ones((1,self.width) , dtype = int)) , map_matrix]
+            if next_position[0] == self.height - 1:
+                map_matrix = np.r_[map_matrix , np.mat(-1 * np.ones((1 , self.width) , dtype = int))]
             if next_position[1] == 0: 
-                self.map_msg.data = np.c_[np.mat(-1 * np.ones((height + 1 , 1) , dtype = int)) , self.map_msg.data]
-            if next_position[1] == width:
-                self.map_msg.data = np.c_[self.map_msg.data , np.mat(-1 * np.ones((height + 1 , 1) , dtype = int))]
-        print(self.map_msg.data)
+                map_matrix = np.c_[np.mat(-1 * np.ones((np.shape(map_matrix)[0] , 1) , dtype = int)) , map_matrix]
+            if next_position[1] == self.width:
+                map_matrix = np.c_[map_matrix , np.mat(-1 * np.ones((np.shape(map_matrix)[0] , 1) , dtype = int))]  
+            self.height , self.width = np.shape(map_matrix)
+            self.Map_dimension.label , self.Map_dimension.size , self.Map_dimension.stride = 'Map' , self.height , self.width
+            self.current_position = np.where(map_matrix == 2)
+        
+
         #If Sensor Data Number is not enough , throwout ERROR
         if(len(map_Data) != 8):
             rospy.logerr_once('Data not enough to generate map')
+        #--- Pximity Sequence ---#
+        #|--------------------- |#
+        #|  0   |   1   |   2   |#
+        #|----------------------|#
+        #|  7   |       |   3   |#
+        #|----------------------|#
+        #|  6   |   5   |   4   |#
+        #|----------------------|#  
+        pos_degree = self.theta * 180 / math.pi
+        psSequence = self.list_move_right([0,1,2,7,3,6,5,4] , int(pos_degree / 45))
+        psSequence.insert(4,8)
+        rospy.loginfo(psSequence)
         for i , item in enumerate(map_Data):
-            if i == 8:
-                continue
-            pass
+            row , line = psSequence.index(i) % 3 - 1 , psSequence.index(i) / 3 - 1
+            if item.range > 1000:
+                rospy.loginfo('ps' + str(i) + 'get obstacle')
+                map_matrix[self.current_position[0] + row , self.current_position[1] + line] = 1
+            else:
+                map_matrix[self.current_position[0] + row , self.current_position[1] + line] = 0
+        self.map_msg.data = self.Convert_MapData(map_matrix)
+
+    def Convert_MapData(self,data):
+        #---Convert matrix data to list data---#
+        data = data.flatten()
+        data = data.tolist()
+        return data[0]
+
+    def list_move_right(self,list , k):
+        #---Move list---#
+        for i in range(k):
+            list.insert(0,list.pop())
+        return list
 
     def Velocity_callback(self,data):
         if data.linear.x == self.linear and data.angular.z == self.angular:
@@ -220,7 +264,8 @@ class E_puck_Test():
         self.motor_pos = [leftMotor.data , rightMotor.data]
 
 if __name__ == '__main__':
-    robot_name = 'robot1_3173_nan_ThinkPad'
+    #---Robot name changes when restarting webots---#
+    robot_name = 'robot1_3620_nan_ThinkPad'
     init_x , init_y , init_theta = 0.0 , 0.0 , 0.0
     robot = E_puck_Test(robot_name,init_x,init_y,init_theta)
     rospy.spin()
